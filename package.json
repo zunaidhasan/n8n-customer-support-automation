@@ -1,0 +1,10 @@
+{
+  "name": "ai-customer-support-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n customer support automation starter with conservative AI routing",
+  "scripts": {
+    "check:classify": "node -e \"const f=require('fs'); new Function(f.readFileSync('scripts/classify-email.js','utf8')); console.log('classify script syntax OK')\"",
+    "check:validate": "node -e \"const f=require('fs'); new Function(f.readFileSync('scripts/validate-ai-response.js','utf8')); console.log('validation script syntax OK')\""
+  }
+}

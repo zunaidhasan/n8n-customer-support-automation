@@ -1,0 +1,603 @@
+
+==============================================================================
+FILE: .env.example
+==============================================================================
+# Reference only. Do not commit real credentials.
+# Prefer n8n Credentials for OAuth tokens and API keys.
+
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=
+GOOGLE_SHEETS_SPREADSHEET_ID=
+FAQ_SHEET_NAME=FAQ
+ACTIVITY_SHEET_NAME=Activity Log
+ESCALATION_EMAIL=
+
+==============================================================================
+FILE: FILE-INDEX.txt
+==============================================================================
+AI CUSTOMER SUPPORT AUTOMATION REPOSITORY
+
+Files:
+- .env.example
+- README.md
+- docs/SETUP.md
+- docs/TESTING.md
+- docs/WORKFLOW-LOGIC.md
+- package.json
+- scripts/classify-email.js
+- scripts/validate-ai-response.js
+- templates/activity-log.csv
+- templates/faq-knowledge-base.csv
+- workflow/n8n-workflow-blueprint.json
+
+==============================================================================
+FILE: README.md
+==============================================================================
+# AI Customer Support Automation (n8n)
+
+A starter repository for the agreed Fiverr project: Gmail-based customer support automation using n8n, OpenAI, and Google Sheets.
+
+## What it does
+
+- Monitors incoming Gmail support emails.
+- Classifies and summarises each enquiry with OpenAI.
+- Uses an approved FAQ/policy spreadsheet as the source of business information.
+- Sends automatic replies only for supported, low-risk questions.
+- Escalates returns, refunds, cancellations, complaints, sensitive requests, unsupported questions, and enquiries requiring live order or inventory data.
+- Logs processing outcomes in Google Sheets.
+- Includes duplicate-processing guidance, error handling guidance, setup notes, and test cases.
+
+## Important scope and safety rules
+
+1. **Returns and refunds are always escalated** for this project.
+2. Cancellations, complaints, sensitive/account-related requests, and unsupported enquiries are always escalated.
+3. Live order status and current stock availability are escalated unless a separate store-platform integration is added.
+4. The AI must use only approved FAQ rows. If no relevant approved answer is found, the email is escalated.
+5. The workflow must never issue refunds, cancel orders, edit orders, or change customer account information.
+6. Do not place Gmail passwords, OpenAI API keys, OAuth tokens, or other secrets in this repository.
+
+## Repository contents
+
+- `workflow/n8n-workflow-blueprint.json`: workflow structure and node configuration reference for importing/building in n8n. Review and connect credentials and spreadsheet IDs before activation.
+- `scripts/classify-email.js`: Code node logic for conservative routing.
+- `scripts/validate-ai-response.js`: Code node logic to reject unsupported or unsafe automatic replies.
+- `templates/faq-knowledge-base.csv`: starter FAQ sheet structure.
+- `templates/activity-log.csv`: activity log structure.
+- `docs/SETUP.md`: account, credential, and workflow setup.
+- `docs/WORKFLOW-LOGIC.md`: routing rules and data flow.
+- `docs/TESTING.md`: test cases and acceptance checklist.
+- `.env.example`: names of configuration values, with no real secrets.
+
+## Before production use
+
+This repository is a project handover starter, not proof that the buyer's external accounts are connected. The buyer must authorise Gmail, configure OpenAI credentials, connect Google Sheets, set the spreadsheet and sheet identifiers, and run the tests in `docs/TESTING.md`. Activate the workflow only after successful tests.
+
+## Suggested n8n setup
+
+Use a current supported n8n version. Create credentials in n8n's Credentials area:
+- Gmail OAuth2
+- Google Sheets OAuth2
+- OpenAI API key (or HTTP Header Auth for the OpenAI HTTP Request node)
+
+Use the credential manager. Never paste secrets into workflow notes, Code nodes, CSV files, or Fiverr messages.
+
+==============================================================================
+FILE: docs/SETUP.md
+==============================================================================
+# Setup Guide
+
+## 1. Create the required accounts
+
+The buyer supplies and owns the accounts:
+- n8n account or self-hosted n8n instance
+- Gmail support account
+- OpenAI account with API access
+- Google account for the FAQ and activity spreadsheets
+
+## 2. Create the Google Sheets workbook
+
+Create one spreadsheet with two tabs.
+
+### Tab 1: FAQ
+
+Use the columns from `templates/faq-knowledge-base.csv`:
+- `faq_id`
+- `category`
+- `question`
+- `approved_answer`
+- `keywords`
+- `active`
+- `last_updated`
+
+Only put approved, current business information in this tab. Set `active` to `TRUE` for rows the workflow may use.
+
+### Tab 2: Activity Log
+
+Use the columns from `templates/activity-log.csv`. The workflow should append one row per processed message, including whether it was automatically answered or escalated.
+
+## 3. Configure n8n credentials
+
+In n8n, create:
+1. Gmail OAuth2 credential, authorised by the buyer.
+2. Google Sheets OAuth2 credential, authorised by the buyer.
+3. OpenAI credential or HTTP Header Auth credential for the OpenAI API.
+
+Do not send credentials through Fiverr chat. Do not store credentials in this repository.
+
+## 4. Connect the Gmail trigger
+
+Configure the Gmail Trigger to monitor the support inbox. Choose an appropriate polling interval and restrict it to the intended support mailbox or label.
+
+Map the Gmail trigger output into these fields before classification:
+- `messageId`
+- `threadId`
+- `from`
+- `subject`
+- `body`
+- `receivedAt`
+
+Use the Gmail message ID as the duplicate-prevention key.
+
+## 5. Add duplicate prevention
+
+Before processing, check the Activity Log for the incoming `messageId`. If a record already exists, stop the workflow. For higher-volume use, use a persistent data store or database with a unique constraint on `messageId`; a spreadsheet lookup alone can have race conditions.
+
+## 6. Configure FAQ lookup
+
+Read active FAQ rows from the `FAQ` tab. Match the incoming enquiry to the relevant category and keywords. Pass only the matching approved answer(s) to the AI response-generation step.
+
+If no sufficiently relevant approved answer is found, escalate the email. Do not ask the AI to fill gaps from general knowledge.
+
+## 7. Configure OpenAI
+
+Use an OpenAI chat completion request with a concise system instruction such as:
+
+"You write friendly, professional customer support email drafts for a UK home decor store. Use only the approved FAQ answer supplied in the input. Do not add policies, dates, guarantees, prices, stock information, order status, or refund decisions that are not explicitly present. If the supplied answer does not fully answer the question, return ESCALATE. Never promise a refund, cancellation, order change, or account change."
+
+Use a low temperature. Parse the result and pass it through the validator in `scripts/validate-ai-response.js`.
+
+## 8. Configure routing
+
+- `auto_reply`: send the approved response through Gmail, then append an activity log row.
+- `escalate`: do not send an automatic customer reply. Notify the configured support owner with sender, subject, category, summary, and escalation reason. Append an activity log row.
+
+Always escalate:
+- Returns and refunds
+- Cancellations
+- Complaints
+- Order status and tracking requests unless a verified store integration is added
+- Product availability requests unless a verified inventory integration is added
+- Sensitive/account-related requests
+- Unclear or unsupported questions
+
+## 9. Test before activation
+
+Follow `TESTING.md`. Keep the workflow inactive until all required tests pass. Confirm that the buyer receives escalation notifications and that the activity log records the final status correctly.
+
+==============================================================================
+FILE: docs/TESTING.md
+==============================================================================
+# Testing and Acceptance Checklist
+
+Run these tests using sample emails before enabling the workflow for live customers.
+
+| Test | Expected result |
+|---|---|
+| FAQ-backed delivery policy question | Auto-reply only if the active FAQ contains a clear approved answer |
+| Return request | Escalated; no automatic customer reply |
+| Refund request | Escalated; no automatic customer reply |
+| Cancellation request | Escalated; no automatic customer reply |
+| Complaint or damaged-item report | Escalated; no automatic customer reply |
+| Order tracking/status question | Escalated unless a verified store integration is configured |
+| Product stock/availability question | Escalated unless a verified inventory integration is configured |
+| Product question with no matching FAQ | Escalated; no invented answer |
+| Ambiguous email | Escalated |
+| Same Gmail message processed twice | Second run is stopped or marked duplicate |
+| Gmail send failure | Error is logged; do not mark as successfully answered |
+| Google Sheets write failure | Execution is logged and owner is notified where configured |
+| Escalation notification | Includes sender, subject, category, summary, original message, and reason |
+| Activity log | Shows `AUTO_REPLIED` or `ESCALATED`, plus timestamp and message ID |
+
+## Acceptance checklist
+
+- [ ] Gmail OAuth connection works.
+- [ ] Google Sheets connection works.
+- [ ] OpenAI connection works.
+- [ ] Only active FAQ rows are used.
+- [ ] The model is instructed to use only supplied approved content.
+- [ ] Mandatory escalation categories cannot reach the auto-reply node.
+- [ ] No auto-reply is sent when an FAQ match is missing.
+- [ ] Duplicate prevention works.
+- [ ] Activity log records the final outcome.
+- [ ] Error handling has been tested.
+- [ ] Buyer has received workflow export, setup guide, and walkthrough video.
+
+==============================================================================
+FILE: docs/WORKFLOW-LOGIC.md
+==============================================================================
+# Workflow Logic
+
+## High-level flow
+
+Gmail Trigger
+→ Normalize email fields
+→ Duplicate check
+→ Conservative classification
+→ FAQ lookup (only for eligible categories)
+→ OpenAI response draft using approved FAQ content
+→ Safety validation
+→ Conditional routing
+
+### Automatic response path
+
+1. The email category is eligible for automation.
+2. An active FAQ row provides a relevant approved answer.
+3. OpenAI drafts a reply using only that answer.
+4. The validator confirms the FAQ match and response are present.
+5. Gmail sends the reply.
+6. Google Sheets records `AUTO_REPLIED`.
+
+### Manual escalation path
+
+1. The category is restricted, the email is sensitive, no FAQ match exists, or the AI response fails validation.
+2. No automatic customer reply is sent.
+3. Gmail sends an internal notification to the configured support owner.
+4. Google Sheets records `ESCALATED` and the reason.
+
+## Mandatory escalation categories
+
+- Returns and Refunds
+- Cancellations
+- Complaints
+- Order Status
+- Product Availability
+- Sensitive or account-related requests
+- Unsupported or ambiguous enquiries
+
+Order status and stock availability can be automated only after a separate, tested integration with the store's actual order and inventory data is approved and added.
+
+## Activity log fields
+
+- `message_id`
+- `received_at`
+- `customer_email`
+- `subject`
+- `category`
+- `summary`
+- `response_status`
+- `escalation_reason`
+- `processed_at`
+
+## Reliability notes
+
+- Use Gmail message ID for idempotency.
+- Avoid sending an automatic reply if any required node fails.
+- Log failures separately and notify the owner if a workflow execution fails.
+- Keep the original email content available in the escalation notification.
+- Do not include full payment details or unnecessary personal data in logs.
+
+==============================================================================
+FILE: package.json
+==============================================================================
+{
+  "name": "ai-customer-support-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n customer support automation starter with conservative AI routing",
+  "scripts": {
+    "check:classify": "node -e \"const f=require('fs'); new Function(f.readFileSync('scripts/classify-email.js','utf8')); console.log('classify script syntax OK')\"",
+    "check:validate": "node -e \"const f=require('fs'); new Function(f.readFileSync('scripts/validate-ai-response.js','utf8')); console.log('validation script syntax OK')\""
+  }
+}
+
+==============================================================================
+FILE: scripts/classify-email.js
+==============================================================================
+/**
+ * n8n Code node (JavaScript)
+ * Input: one Gmail message per item. Expected fields can be mapped in the
+ * Normalize Email node: messageId, threadId, from, subject, body.
+ *
+ * This is intentionally conservative. Returns/refunds, cancellations,
+ * complaints, sensitive requests, and live order/stock enquiries are routed
+ * to a human unless a separate verified store integration is implemented.
+ */
+
+const text = (value) => String(value ?? "").trim();
+const email = $input.item.json;
+
+const messageId = text(email.messageId || email.id);
+const from = text(email.from || email.sender);
+const subject = text(email.subject);
+const body = text(email.body || email.text || email.snippet);
+const combined = `${subject}\n${body}`.toLowerCase();
+
+const rules = [
+  { category: "Returns and Refunds", patterns: [/\brefund\b/, /\breturn(?:s|ing)?\b/, /\bmoney back\b/, /\breimbursement\b] },
+  { category: "Cancellations", patterns: [/\bcancel(?:lation|ling|led)?\b/, /\bstop my order\b] },
+  { category: "Complaints", patterns: [/\bcomplaint\b/, /\bunhappy\b/, /\bdisappointed\b/, /\bdamaged\b/, /\bwrong item\b/, /\bpoor service\b] },
+  { category: "Order Status", patterns: [/\bwhere is my order\b/, /\border status\b/, /\btracking\b/, /\bhas my order\b/, /\bdispatch(?:ed)?\b] },
+  { category: "Product Availability", patterns: [/\bin stock\b/, /\bout of stock\b/, /\bavailability\b/, /\bavailable again\b/, /\brestock\b] },
+  { category: "Shipping and Delivery", patterns: [/\bdelivery\b/, /\bshipping\b/, /\barrive\b/, /\barrival\b/, /\bdispatch time\b] },
+  { category: "Product Information", patterns: [/\bmaterial\b/, /\bdimension(?:s)?\b/, /\bsize\b/, /\bcolour\b/, /\bcolor\b/, /\bproduct details\b] },
+];
+
+let category = "General Support";
+for (const rule of rules) {
+  if (rule.patterns.some((pattern) => pattern.test(combined))) {
+    category = rule.category;
+    break;
+  }
+}
+
+const alwaysEscalate = new Set([
+  "Returns and Refunds",
+  "Cancellations",
+  "Complaints",
+  "Order Status",
+  "Product Availability",
+]);
+
+const hasSensitiveSignal =
+  /\b(password|login|account access|personal data|data protection|chargeback|legal action|fraud|payment dispute)\b/i.test(combined);
+
+const route = alwaysEscalate.has(category) || hasSensitiveSignal
+  ? "escalate"
+  : "faq_check";
+
+return {
+  json: {
+    messageId,
+    threadId: text(email.threadId),
+    from,
+    subject,
+    body,
+    category,
+    route,
+    escalationReason: hasSensitiveSignal
+      ? "Sensitive or account-related content detected."
+      : alwaysEscalate.has(category)
+        ? `${category} enquiries require manual review under the agreed business rules.`
+        : "",
+    receivedAt: text(email.receivedAt || email.date || new Date().toISOString()),
+  },
+};
+
+==============================================================================
+FILE: scripts/validate-ai-response.js
+==============================================================================
+/**
+ * n8n Code node (JavaScript)
+ * Run after AI response generation and FAQ lookup.
+ *
+ * Expected input:
+ * {
+ *   category, route, faqMatch, faqAnswer, aiReply, from, subject, messageId
+ * }
+ *
+ * This validator is a second safety gate. Do not rely on the language model
+ * alone to enforce business rules.
+ */
+
+const data = $input.item.json;
+const category = String(data.category || "General Support");
+const aiReply = String(data.aiReply || "").trim();
+const faqAnswer = String(data.faqAnswer || "").trim();
+const faqMatch = data.faqMatch === true || data.faqMatch === "true";
+
+const blockedCategories = new Set([
+  "Returns and Refunds",
+  "Cancellations",
+  "Complaints",
+  "Order Status",
+  "Product Availability",
+]);
+
+const unsafe = blockedCategories.has(category);
+const canAutoReply = !unsafe && faqMatch && faqAnswer.length > 0 && aiReply.length > 0;
+
+return {
+  json: {
+    ...data,
+    finalRoute: canAutoReply ? "auto_reply" : "escalate",
+    finalEscalationReason: canAutoReply
+      ? ""
+      : (unsafe
+          ? `${category} enquiries must be handled manually.`
+          : "No approved FAQ answer or valid AI response was available."),
+    safeToSend: canAutoReply,
+  },
+};
+
+==============================================================================
+FILE: templates/activity-log.csv
+==============================================================================
+message_id,received_at,customer_email,subject,category,summary,response_status,escalation_reason,processed_at
+
+==============================================================================
+FILE: templates/faq-knowledge-base.csv
+==============================================================================
+faq_id,category,question,approved_answer,keywords,active,last_updated
+FAQ-001,Shipping and Delivery,What are your delivery times?,ADD YOUR APPROVED DELIVERY-TIME POLICY HERE,delivery;shipping;arrival,TRUE,
+FAQ-002,Product Information,What materials are used in this product?,ADD APPROVED PRODUCT MATERIAL INFORMATION HERE,material;wood;fabric;dimensions,TRUE,
+FAQ-003,General Support,How can I contact customer support?,ADD YOUR APPROVED SUPPORT CONTACT INFORMATION HERE,contact;support;help,TRUE,
+
+==============================================================================
+FILE: workflow/n8n-workflow-blueprint.json
+==============================================================================
+{
+  "name": "AI Customer Support Automation - Starter Blueprint",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "id": "1f7d0e12-0001-4d2d-9000-000000000001",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Connect buyer-owned Gmail OAuth2 credentials. Verify output fields with a real sample."
+    },
+    {
+      "parameters": {
+        "jsCode": "const m = $input.item.json;\nreturn { json: {\n  messageId: String(m.id || m.messageId || ''),\n  threadId: String(m.threadId || ''),\n  from: String(m.from || m.sender || ''),\n  subject: String(m.subject || ''),\n  body: String(m.text || m.textPlain || m.snippet || ''),\n  receivedAt: String(m.date || m.internalDate || new Date().toISOString())\n}};"
+      },
+      "id": "1f7d0e12-0002-4d2d-9000-000000000002",
+      "name": "Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node (JavaScript)\n * Input: one Gmail message per item. Expected fields can be mapped in the\n * Normalize Email node: messageId, threadId, from, subject, body.\n *\n * This is intentionally conservative. Returns/refunds, cancellations,\n * complaints, sensitive requests, and live order/stock enquiries are routed\n * to a human unless a separate verified store integration is implemented.\n */\n\nconst text = (value) => String(value ?? \"\").trim();\nconst email = $input.item.json;\n\nconst messageId = text(email.messageId || email.id);\nconst from = text(email.from || email.sender);\nconst subject = text(email.subject);\nconst body = text(email.body || email.text || email.snippet);\nconst combined = `${subject}\\n${body}`.toLowerCase();\n\nconst rules = [\n  { category: \"Returns and Refunds\", patterns: [/\\brefund\\b/, /\\breturn(?:s|ing)?\\b/, /\\bmoney back\\b/, /\\breimbursement\\b] },\n  { category: \"Cancellations\", patterns: [/\\bcancel(?:lation|ling|led)?\\b/, /\\bstop my order\\b] },\n  { category: \"Complaints\", patterns: [/\\bcomplaint\\b/, /\\bunhappy\\b/, /\\bdisappointed\\b/, /\\bdamaged\\b/, /\\bwrong item\\b/, /\\bpoor service\\b] },\n  { category: \"Order Status\", patterns: [/\\bwhere is my order\\b/, /\\border status\\b/, /\\btracking\\b/, /\\bhas my order\\b/, /\\bdispatch(?:ed)?\\b] },\n  { category: \"Product Availability\", patterns: [/\\bin stock\\b/, /\\bout of stock\\b/, /\\bavailability\\b/, /\\bavailable again\\b/, /\\brestock\\b] },\n  { category: \"Shipping and Delivery\", patterns: [/\\bdelivery\\b/, /\\bshipping\\b/, /\\barrive\\b/, /\\barrival\\b/, /\\bdispatch time\\b] },\n  { category: \"Product Information\", patterns: [/\\bmaterial\\b/, /\\bdimension(?:s)?\\b/, /\\bsize\\b/, /\\bcolour\\b/, /\\bcolor\\b/, /\\bproduct details\\b] },\n];\n\nlet category = \"General Support\";\nfor (const rule of rules) {\n  if (rule.patterns.some((pattern) => pattern.test(combined))) {\n    category = rule.category;\n    break;\n  }\n}\n\nconst alwaysEscalate = new Set([\n  \"Returns and Refunds\",\n  \"Cancellations\",\n  \"Complaints\",\n  \"Order Status\",\n  \"Product Availability\",\n]);\n\nconst hasSensitiveSignal =\n  /\\b(password|login|account access|personal data|data protection|chargeback|legal action|fraud|payment dispute)\\b/i.test(combined);\n\nconst route = alwaysEscalate.has(category) || hasSensitiveSignal\n  ? \"escalate\"\n  : \"faq_check\";\n\nreturn {\n  json: {\n    messageId,\n    threadId: text(email.threadId),\n    from,\n    subject,\n    body,\n    category,\n    route,\n    escalationReason: hasSensitiveSignal\n      ? \"Sensitive or account-related content detected.\"\n      : alwaysEscalate.has(category)\n        ? `${category} enquiries require manual review under the agreed business rules.`\n        : \"\",\n    receivedAt: text(email.receivedAt || email.date || new Date().toISOString()),\n  },\n};\n"
+      },
+      "id": "1f7d0e12-0003-4d2d-9000-000000000003",
+      "name": "Classify and Route Safely",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "notes": "Conservative rules. Restricted enquiry types are escalated."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "route-condition",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "escalate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1f7d0e12-0004-4d2d-9000-000000000004",
+      "name": "Needs Manual Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn { json: {\n  to: 'REPLACE_WITH_OWNER_NOTIFICATION_EMAIL',\n  subject: `[Support escalation] ${d.category}: ${d.subject}`,\n  body: [\n    `Customer: ${d.from}`,\n    `Category: ${d.category}`,\n    `Subject: ${d.subject}`,\n    `Reason: ${d.escalationReason}`,\n    '',\n    'Original message:',\n    d.body\n  ].join('\\\\n'),\n  ...d,\n  responseStatus: 'ESCALATED'\n}};"
+      },
+      "id": "1f7d0e12-0005-4d2d-9000-000000000005",
+      "name": "Prepare Escalation Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        180
+      ],
+      "notes": "Connect to Gmail Send and Google Sheets Append Row nodes. Replace notification email."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn { json: {\n  ...d,\n  faqMatch: false,\n  faqAnswer: '',\n  responseStatus: 'ESCALATED',\n  escalationReason: 'FAQ lookup and AI response generation are not configured in this starter blueprint.'\n}};"
+      },
+      "id": "1f7d0e12-0006-4d2d-9000-000000000006",
+      "name": "FAQ and AI Setup Required",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        420
+      ],
+      "notes": "Safe default: do not send a customer reply. Add Google Sheets FAQ lookup, OpenAI drafting, and response validation before enabling auto-replies."
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "Classify and Route Safely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify and Route Safely": {
+      "main": [
+        [
+          {
+            "node": "Needs Manual Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Manual Escalation?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Escalation Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FAQ and AI Setup Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1f7d0e12-1000-4d2d-9000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

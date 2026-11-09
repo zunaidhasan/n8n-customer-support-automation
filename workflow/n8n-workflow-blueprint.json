@@ -1,0 +1,176 @@
+{
+  "name": "AI Customer Support Automation - Starter Blueprint",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "id": "1f7d0e12-0001-4d2d-9000-000000000001",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Connect buyer-owned Gmail OAuth2 credentials. Verify output fields with a real sample."
+    },
+    {
+      "parameters": {
+        "jsCode": "const m = $input.item.json;\nreturn { json: {\n  messageId: String(m.id || m.messageId || ''),\n  threadId: String(m.threadId || ''),\n  from: String(m.from || m.sender || ''),\n  subject: String(m.subject || ''),\n  body: String(m.text || m.textPlain || m.snippet || ''),\n  receivedAt: String(m.date || m.internalDate || new Date().toISOString())\n}};"
+      },
+      "id": "1f7d0e12-0002-4d2d-9000-000000000002",
+      "name": "Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node (JavaScript)\n * Input: one Gmail message per item. Expected fields can be mapped in the\n * Normalize Email node: messageId, threadId, from, subject, body.\n *\n * This is intentionally conservative. Returns/refunds, cancellations,\n * complaints, sensitive requests, and live order/stock enquiries are routed\n * to a human unless a separate verified store integration is implemented.\n */\n\nconst text = (value) => String(value ?? \"\").trim();\nconst email = $input.item.json;\n\nconst messageId = text(email.messageId || email.id);\nconst from = text(email.from || email.sender);\nconst subject = text(email.subject);\nconst body = text(email.body || email.text || email.snippet);\nconst combined = `${subject}\\n${body}`.toLowerCase();\n\nconst rules = [\n  { category: \"Returns and Refunds\", patterns: [/\\brefund\\b/, /\\breturn(?:s|ing)?\\b/, /\\bmoney back\\b/, /\\breimbursement\\b] },\n  { category: \"Cancellations\", patterns: [/\\bcancel(?:lation|ling|led)?\\b/, /\\bstop my order\\b] },\n  { category: \"Complaints\", patterns: [/\\bcomplaint\\b/, /\\bunhappy\\b/, /\\bdisappointed\\b/, /\\bdamaged\\b/, /\\bwrong item\\b/, /\\bpoor service\\b] },\n  { category: \"Order Status\", patterns: [/\\bwhere is my order\\b/, /\\border status\\b/, /\\btracking\\b/, /\\bhas my order\\b/, /\\bdispatch(?:ed)?\\b] },\n  { category: \"Product Availability\", patterns: [/\\bin stock\\b/, /\\bout of stock\\b/, /\\bavailability\\b/, /\\bavailable again\\b/, /\\brestock\\b] },\n  { category: \"Shipping and Delivery\", patterns: [/\\bdelivery\\b/, /\\bshipping\\b/, /\\barrive\\b/, /\\barrival\\b/, /\\bdispatch time\\b] },\n  { category: \"Product Information\", patterns: [/\\bmaterial\\b/, /\\bdimension(?:s)?\\b/, /\\bsize\\b/, /\\bcolour\\b/, /\\bcolor\\b/, /\\bproduct details\\b] },\n];\n\nlet category = \"General Support\";\nfor (const rule of rules) {\n  if (rule.patterns.some((pattern) => pattern.test(combined))) {\n    category = rule.category;\n    break;\n  }\n}\n\nconst alwaysEscalate = new Set([\n  \"Returns and Refunds\",\n  \"Cancellations\",\n  \"Complaints\",\n  \"Order Status\",\n  \"Product Availability\",\n]);\n\nconst hasSensitiveSignal =\n  /\\b(password|login|account access|personal data|data protection|chargeback|legal action|fraud|payment dispute)\\b/i.test(combined);\n\nconst route = alwaysEscalate.has(category) || hasSensitiveSignal\n  ? \"escalate\"\n  : \"faq_check\";\n\nreturn {\n  json: {\n    messageId,\n    threadId: text(email.threadId),\n    from,\n    subject,\n    body,\n    category,\n    route,\n    escalationReason: hasSensitiveSignal\n      ? \"Sensitive or account-related content detected.\"\n      : alwaysEscalate.has(category)\n        ? `${category} enquiries require manual review under the agreed business rules.`\n        : \"\",\n    receivedAt: text(email.receivedAt || email.date || new Date().toISOString()),\n  },\n};\n"
+      },
+      "id": "1f7d0e12-0003-4d2d-9000-000000000003",
+      "name": "Classify and Route Safely",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "notes": "Conservative rules. Restricted enquiry types are escalated."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "route-condition",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "escalate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1f7d0e12-0004-4d2d-9000-000000000004",
+      "name": "Needs Manual Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn { json: {\n  to: 'REPLACE_WITH_OWNER_NOTIFICATION_EMAIL',\n  subject: `[Support escalation] ${d.category}: ${d.subject}`,\n  body: [\n    `Customer: ${d.from}`,\n    `Category: ${d.category}`,\n    `Subject: ${d.subject}`,\n    `Reason: ${d.escalationReason}`,\n    '',\n    'Original message:',\n    d.body\n  ].join('\\\\n'),\n  ...d,\n  responseStatus: 'ESCALATED'\n}};"
+      },
+      "id": "1f7d0e12-0005-4d2d-9000-000000000005",
+      "name": "Prepare Escalation Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        180
+      ],
+      "notes": "Connect to Gmail Send and Google Sheets Append Row nodes. Replace notification email."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn { json: {\n  ...d,\n  faqMatch: false,\n  faqAnswer: '',\n  responseStatus: 'ESCALATED',\n  escalationReason: 'FAQ lookup and AI response generation are not configured in this starter blueprint.'\n}};"
+      },
+      "id": "1f7d0e12-0006-4d2d-9000-000000000006",
+      "name": "FAQ and AI Setup Required",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        420
+      ],
+      "notes": "Safe default: do not send a customer reply. Add Google Sheets FAQ lookup, OpenAI drafting, and response validation before enabling auto-replies."
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "Classify and Route Safely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify and Route Safely": {
+      "main": [
+        [
+          {
+            "node": "Needs Manual Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Manual Escalation?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Escalation Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FAQ and AI Setup Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1f7d0e12-1000-4d2d-9000-000000000000",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

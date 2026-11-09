@@ -1,0 +1,4 @@
+faq_id,category,question,approved_answer,keywords,active,last_updated
+FAQ-001,Shipping and Delivery,What are your delivery times?,ADD YOUR APPROVED DELIVERY-TIME POLICY HERE,delivery;shipping;arrival,TRUE,
+FAQ-002,Product Information,What materials are used in this product?,ADD APPROVED PRODUCT MATERIAL INFORMATION HERE,material;wood;fabric;dimensions,TRUE,
+FAQ-003,General Support,How can I contact customer support?,ADD YOUR APPROVED SUPPORT CONTACT INFORMATION HERE,contact;support;help,TRUE,

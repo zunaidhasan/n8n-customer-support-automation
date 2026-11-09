@@ -1,0 +1,14 @@
+AI CUSTOMER SUPPORT AUTOMATION REPOSITORY
+
+Files:
+- .env.example
+- README.md
+- docs/SETUP.md
+- docs/TESTING.md
+- docs/WORKFLOW-LOGIC.md
+- package.json
+- scripts/classify-email.js
+- scripts/validate-ai-response.js
+- templates/activity-log.csv
+- templates/faq-knowledge-base.csv
+- workflow/n8n-workflow-blueprint.json
